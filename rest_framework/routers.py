@@ -21,7 +21,6 @@ from django.conf.urls import patterns, url
 from django.core.exceptions import ImproperlyConfigured
 from django.core.urlresolvers import NoReverseMatch
 from rest_framework import views
-from rest_framework.compat import get_resolver_match, OrderedDict
 from rest_framework.response import Response
 from rest_framework.reverse import reverse
 from rest_framework.urlpatterns import format_suffix_patterns
@@ -65,13 +64,13 @@ class BaseRouter(object):
         If `base_name` is not specified, attempt to automatically determine
         it from the viewset.
         """
-        raise NotImplementedError('get_default_base_name must be overridden')
+        raise NotImplemented('get_default_base_name must be overridden')
 
     def get_urls(self):
         """
         Return a list of URL patterns, given the registered viewsets.
         """
-        raise NotImplementedError('get_urls must be overridden')
+        raise NotImplemented('get_urls must be overridden')
 
     @property
     def urls(self):
@@ -130,13 +129,19 @@ class SimpleRouter(BaseRouter):
         If `base_name` is not specified, attempt to automatically determine
         it from the viewset.
         """
+        # Note that `.model` attribute on views is deprecated, although we
+        # enforce the deprecation on the view `get_serializer_class()` and
+        # `get_queryset()` methods, rather than here.
+        model_cls = getattr(viewset, 'model', None)
         queryset = getattr(viewset, 'queryset', None)
+        if model_cls is None and queryset is not None:
+            model_cls = queryset.model
 
-        assert queryset is not None, '`base_name` argument not specified, and could ' \
+        assert model_cls, '`base_name` argument not specified, and could ' \
             'not automatically determine the name from the viewset, as ' \
             'it does not have a `.queryset` attribute.'
 
-        return queryset.model._meta.object_name.lower()
+        return model_cls._meta.object_name.lower()
 
     def get_routes(self, viewset):
         """
@@ -165,30 +170,30 @@ class SimpleRouter(BaseRouter):
                 else:
                     list_routes.append((httpmethods, methodname))
 
-        def _get_dynamic_routes(route, dynamic_routes):
-            ret = []
-            for httpmethods, methodname in dynamic_routes:
-                method_kwargs = getattr(viewset, methodname).kwargs
-                initkwargs = route.initkwargs.copy()
-                initkwargs.update(method_kwargs)
-                url_path = initkwargs.pop("url_path", None) or methodname
-                ret.append(Route(
-                    url=replace_methodname(route.url, url_path),
-                    mapping=dict((httpmethod, methodname) for httpmethod in httpmethods),
-                    name=replace_methodname(route.name, url_path),
-                    initkwargs=initkwargs,
-                ))
-
-            return ret
-
         ret = []
         for route in self.routes:
             if isinstance(route, DynamicDetailRoute):
                 # Dynamic detail routes (@detail_route decorator)
-                ret += _get_dynamic_routes(route, detail_routes)
+                for httpmethods, methodname in detail_routes:
+                    initkwargs = route.initkwargs.copy()
+                    initkwargs.update(getattr(viewset, methodname).kwargs)
+                    ret.append(Route(
+                        url=replace_methodname(route.url, methodname),
+                        mapping=dict((httpmethod, methodname) for httpmethod in httpmethods),
+                        name=replace_methodname(route.name, methodname),
+                        initkwargs=initkwargs,
+                    ))
             elif isinstance(route, DynamicListRoute):
                 # Dynamic list routes (@list_route decorator)
-                ret += _get_dynamic_routes(route, list_routes)
+                for httpmethods, methodname in list_routes:
+                    initkwargs = route.initkwargs.copy()
+                    initkwargs.update(getattr(viewset, methodname).kwargs)
+                    ret.append(Route(
+                        url=replace_methodname(route.url, methodname),
+                        mapping=dict((httpmethod, methodname) for httpmethod in httpmethods),
+                        name=replace_methodname(route.name, methodname),
+                        initkwargs=initkwargs,
+                    ))
             else:
                 # Standard route
                 ret.append(route)
@@ -218,15 +223,14 @@ class SimpleRouter(BaseRouter):
 
         https://github.com/alanjds/drf-nested-routers
         """
-        base_regex = '(?P<{lookup_prefix}{lookup_url_kwarg}>{lookup_value})'
+        base_regex = '(?P<{lookup_prefix}{lookup_field}>{lookup_value})'
         # Use `pk` as default field, unset set.  Default regex should not
         # consume `.json` style suffixes and should break at '/' boundaries.
         lookup_field = getattr(viewset, 'lookup_field', 'pk')
-        lookup_url_kwarg = getattr(viewset, 'lookup_url_kwarg', None) or lookup_field
         lookup_value = getattr(viewset, 'lookup_value_regex', '[^/.]+')
         return base_regex.format(
             lookup_prefix=lookup_prefix,
-            lookup_url_kwarg=lookup_url_kwarg,
+            lookup_field=lookup_field,
             lookup_value=lookup_value
         )
 
@@ -273,7 +277,7 @@ class DefaultRouter(SimpleRouter):
         """
         Return a view to use as the API root.
         """
-        api_root_dict = OrderedDict()
+        api_root_dict = {}
         list_name = self.routes[0].name
         for prefix, viewset, basename in self.registry:
             api_root_dict[prefix] = list_name.format(basename=basename)
@@ -282,11 +286,8 @@ class DefaultRouter(SimpleRouter):
             _ignore_model_permissions = True
 
             def get(self, request, *args, **kwargs):
-                ret = OrderedDict()
-                namespace = get_resolver_match(request).namespace
+                ret = {}
                 for key, url_name in api_root_dict.items():
-                    if namespace:
-                        url_name = namespace + ':' + url_name
                     try:
                         ret[key] = reverse(
                             url_name,

@@ -24,8 +24,7 @@ prettyPrint();
 
 // Bootstrap tooltips.
 $('.js-tooltip').tooltip({
-    delay: 1000,
-    container: 'body'
+    delay: 1000
 });
 
 // Deal with rounded tab styling after tab clicks.
@@ -43,10 +42,6 @@ $('a[data-toggle="tab"]').click(function(){
 // Store tab preference in cookies & display appropriate tab on load.
 var selectedTab = null;
 var selectedTabName = getCookie('tabstyle');
-
-if (selectedTabName) {
-    selectedTabName = selectedTabName.replace(/[^a-z-]/g, '');
-}
 
 if (selectedTabName) {
     selectedTab = $('.form-switcher a[name=' + selectedTabName + ']');

@@ -32,10 +32,10 @@ class BaseThrottle(object):
             if num_proxies == 0 or xff is None:
                 return remote_addr
             addrs = xff.split(',')
-            client_addr = addrs[-min(num_proxies, len(addrs))]
+            client_addr = addrs[-min(num_proxies, len(xff))]
             return client_addr.strip()
 
-        return ''.join(xff.split()) if xff else remote_addr
+        return xff if xff else remote_addr
 
     def wait(self):
         """
@@ -173,6 +173,12 @@ class AnonRateThrottle(SimpleRateThrottle):
         if request.user.is_authenticated():
             return None  # Only throttle unauthenticated requests.
 
+        ident = request.META.get('HTTP_X_FORWARDED_FOR')
+        if ident is None:
+            ident = request.META.get('REMOTE_ADDR')
+        else:
+            ident = ''.join(ident.split())
+
         return self.cache_format % {
             'scope': self.scope,
             'ident': self.get_ident(request)
@@ -191,7 +197,7 @@ class UserRateThrottle(SimpleRateThrottle):
 
     def get_cache_key(self, request, view):
         if request.user.is_authenticated():
-            ident = request.user.pk
+            ident = request.user.id
         else:
             ident = self.get_ident(request)
 
@@ -239,7 +245,7 @@ class ScopedRateThrottle(SimpleRateThrottle):
         with the '.throttle_scope` property of the view.
         """
         if request.user.is_authenticated():
-            ident = request.user.pk
+            ident = request.user.id
         else:
             ident = self.get_ident(request)
 

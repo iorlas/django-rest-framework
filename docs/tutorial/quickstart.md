@@ -19,20 +19,18 @@ Create a new Django project named `tutorial`, then start a new app called `quick
     pip install djangorestframework
 
     # Set up a new project with a single application
-    django-admin.py startproject tutorial .  # Note the trailing '.' character
+    django-admin.py startproject tutorial .
     cd tutorial
     django-admin.py startapp quickstart
-    cd ..
+	cd ..
 
 Now sync your database for the first time:
 
-    python manage.py migrate
+    python manage.py syncdb
 
-We'll also create an initial user named `admin` with a password of `password`. We'll authenticate as that user later in our example.
+Make sure to create an initial user named `admin` with a password of `password`. We'll authenticate as that user later in our example.
 
-    python manage.py createsuperuser
-
-Once you've set up a database and initial user created and ready to go, open up the app's directory and we'll get coding...
+Once you've set up a database and got everything synced and ready to go, open up the app's directory and we'll get coding...
 
 ## Serializers
 
@@ -100,7 +98,7 @@ Okay, now let's wire up the API URLs.  On to `tutorial/urls.py`...
     router.register(r'groups', views.GroupViewSet)
 
     # Wire up our API using automatic URL routing.
-    # Additionally, we include login URLs for the browsable API.
+    # Additionally, we include login URLs for the browseable API.
     urlpatterns = [
         url(r'^', include(router.urls)),
         url(r'^api-auth/', include('rest_framework.urls', namespace='rest_framework'))
@@ -123,7 +121,7 @@ We'd also like to set a few global settings.  We'd like to turn on pagination, a
 
     REST_FRAMEWORK = {
         'DEFAULT_PERMISSION_CLASSES': ('rest_framework.permissions.IsAdminUser',),
-        'PAGE_SIZE': 10
+        'PAGINATE_BY': 10
     }
 
 Okay, we're done.
@@ -159,33 +157,6 @@ We can now access our API, both from the command-line, using tools like `curl`..
         ]
     }
 
-Or using the [httpie][httpie], command line tool...
-
-    bash: http -a username:password http://127.0.0.1:8000/users/
-
-    HTTP/1.1 200 OK
-    ...
-    {
-        "count": 2,
-        "next": null,
-        "previous": null,
-        "results": [
-            {
-                "email": "admin@example.com",
-                "groups": [],
-                "url": "http://localhost:8000/users/1/",
-                "username": "paul"
-            },
-            {
-                "email": "tom@example.com",
-                "groups": [                ],
-                "url": "http://127.0.0.1:8000/users/2/",
-                "username": "tom"
-            }
-        ]
-    }
-
-
 Or directly through the browser...
 
 ![Quick start image][image]
@@ -200,4 +171,3 @@ If you want to get a more in depth understanding of how REST framework fits toge
 [image]: ../img/quickstart.png
 [tutorial]: 1-serialization.md
 [guide]: ../#api-guide
-[httpie]: https://github.com/jakubroztocil/httpie#installation

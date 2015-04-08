@@ -4,32 +4,21 @@ from tests.models import NullableForeignKeySource, ForeignKeySource, ForeignKeyT
 
 
 class ForeignKeyTargetSerializer(serializers.ModelSerializer):
-    sources = serializers.SlugRelatedField(
-        slug_field='name',
-        queryset=ForeignKeySource.objects.all(),
-        many=True
-    )
+    sources = serializers.SlugRelatedField(many=True, slug_field='name')
 
     class Meta:
         model = ForeignKeyTarget
 
 
 class ForeignKeySourceSerializer(serializers.ModelSerializer):
-    target = serializers.SlugRelatedField(
-        slug_field='name',
-        queryset=ForeignKeyTarget.objects.all()
-    )
+    target = serializers.SlugRelatedField(slug_field='name')
 
     class Meta:
         model = ForeignKeySource
 
 
 class NullableForeignKeySourceSerializer(serializers.ModelSerializer):
-    target = serializers.SlugRelatedField(
-        slug_field='name',
-        queryset=ForeignKeyTarget.objects.all(),
-        allow_null=True
-    )
+    target = serializers.SlugRelatedField(slug_field='name', required=False)
 
     class Meta:
         model = NullableForeignKeySource
@@ -54,14 +43,7 @@ class SlugForeignKeyTests(TestCase):
             {'id': 2, 'name': 'source-2', 'target': 'target-1'},
             {'id': 3, 'name': 'source-3', 'target': 'target-1'}
         ]
-        with self.assertNumQueries(4):
-            self.assertEqual(serializer.data, expected)
-
-    def test_foreign_key_retrieve_select_related(self):
-        queryset = ForeignKeySource.objects.all().select_related('target')
-        serializer = ForeignKeySourceSerializer(queryset, many=True)
-        with self.assertNumQueries(1):
-            serializer.data
+        self.assertEqual(serializer.data, expected)
 
     def test_reverse_foreign_key_retrieve(self):
         queryset = ForeignKeyTarget.objects.all()
@@ -72,19 +54,13 @@ class SlugForeignKeyTests(TestCase):
         ]
         self.assertEqual(serializer.data, expected)
 
-    def test_reverse_foreign_key_retrieve_prefetch_related(self):
-        queryset = ForeignKeyTarget.objects.all().prefetch_related('sources')
-        serializer = ForeignKeyTargetSerializer(queryset, many=True)
-        with self.assertNumQueries(2):
-            serializer.data
-
     def test_foreign_key_update(self):
         data = {'id': 1, 'name': 'source-1', 'target': 'target-2'}
         instance = ForeignKeySource.objects.get(pk=1)
         serializer = ForeignKeySourceSerializer(instance, data=data)
         self.assertTrue(serializer.is_valid())
-        serializer.save()
         self.assertEqual(serializer.data, data)
+        serializer.save()
 
         # Ensure source 1 is updated, and everything else is as expected
         queryset = ForeignKeySource.objects.all()
@@ -173,7 +149,7 @@ class SlugForeignKeyTests(TestCase):
         instance = ForeignKeySource.objects.get(pk=1)
         serializer = ForeignKeySourceSerializer(instance, data=data)
         self.assertFalse(serializer.is_valid())
-        self.assertEqual(serializer.errors, {'target': ['This field may not be null.']})
+        self.assertEqual(serializer.errors, {'target': ['This field is required.']})
 
 
 class SlugNullableForeignKeyTests(TestCase):
@@ -244,8 +220,8 @@ class SlugNullableForeignKeyTests(TestCase):
         instance = NullableForeignKeySource.objects.get(pk=1)
         serializer = NullableForeignKeySourceSerializer(instance, data=data)
         self.assertTrue(serializer.is_valid())
-        serializer.save()
         self.assertEqual(serializer.data, data)
+        serializer.save()
 
         # Ensure source 1 is updated, and everything else is as expected
         queryset = NullableForeignKeySource.objects.all()
@@ -267,8 +243,8 @@ class SlugNullableForeignKeyTests(TestCase):
         instance = NullableForeignKeySource.objects.get(pk=1)
         serializer = NullableForeignKeySourceSerializer(instance, data=data)
         self.assertTrue(serializer.is_valid())
-        serializer.save()
         self.assertEqual(serializer.data, expected_data)
+        serializer.save()
 
         # Ensure source 1 is updated, and everything else is as expected
         queryset = NullableForeignKeySource.objects.all()

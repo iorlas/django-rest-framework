@@ -1,4 +1,4 @@
-source: viewsets.py
+<a class="github" href="viewsets.py"></a>
 
 # ViewSets
 
@@ -124,7 +124,7 @@ For example:
         @detail_route(methods=['post'])
         def set_password(self, request, pk=None):
             user = self.get_object()
-            serializer = PasswordSerializer(data=request.data)
+            serializer = PasswordSerializer(data=request.DATA)
             if serializer.is_valid():
                 user.set_password(serializer.data['password'])
                 user.save()
@@ -146,7 +146,7 @@ The decorators can additionally take extra arguments that will be set for the ro
         def set_password(self, request, pk=None):
            ...
 
-These decorators will route `GET` requests by default, but may also accept other HTTP methods, by using the `methods` argument.  For example:
+Theses decorators will route `GET` requests by default, but may also accept other HTTP methods, by using the `methods` argument.  For example:
 
         @detail_route(methods=['post', 'delete'])
         def unset_password(self, request, pk=None):
@@ -178,7 +178,7 @@ The actions provided by the `ModelViewSet` class are `.list()`, `.retrieve()`,  
 
 #### Example
 
-Because `ModelViewSet` extends `GenericAPIView`, you'll normally need to provide at least the `queryset` and `serializer_class` attributes.  For example:
+Because `ModelViewSet` extends `GenericAPIView`, you'll normally need to provide at least the `queryset` and `serializer_class` attributes, or the `model` attribute shortcut.  For example:
 
     class AccountViewSet(viewsets.ModelViewSet):
         """
@@ -200,8 +200,6 @@ Note that you can use any of the standard attributes or method overrides provide
 
         def get_queryset(self):
             return self.request.user.accounts.all()
-
-Note however that upon removal of the `queryset` property from your `ViewSet`, any associated [router][routers] will be unable to derive the base_name of your Model automatically, and so you will have to specify the `base_name` kwarg as part of your [router registration][routers].
 
 Also note that although this class provides the complete set of create/list/retrieve/update/destroy actions by default, you can restrict the available operations by using the standard permission classes.
 
@@ -245,4 +243,3 @@ To create a base viewset class that provides `create`, `list` and `retrieve` ope
 By creating your own base `ViewSet` classes, you can provide common behavior that can be reused in multiple viewsets across your API.
 
 [cite]: http://guides.rubyonrails.org/routing.html
-[routers]: routers.md

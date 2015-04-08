@@ -1,10 +1,10 @@
 from __future__ import unicode_literals
-from django.core.validators import RegexValidator, MaxValueValidator
+from django.core.validators import MaxValueValidator
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.test import TestCase
 from rest_framework import generics, serializers, status
 from rest_framework.test import APIRequestFactory
-import re
 
 factory = APIRequestFactory()
 
@@ -23,8 +23,21 @@ class ValidationModelSerializer(serializers.ModelSerializer):
 
 
 class UpdateValidationModel(generics.RetrieveUpdateDestroyAPIView):
-    queryset = ValidationModel.objects.all()
+    model = ValidationModel
     serializer_class = ValidationModelSerializer
+
+
+class TestPreSaveValidationExclusions(TestCase):
+    def test_pre_save_validation_exclusions(self):
+        """
+        Somewhat weird test case to ensure that we don't perform model
+        validation on read only fields.
+        """
+        obj = ValidationModel.objects.create(blank_validated_field='')
+        request = factory.put('/', {}, format='json')
+        view = UpdateValidationModel().as_view()
+        response = view(request, pk=obj.pk).render()
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
 
 
 # Regression for #653
@@ -36,10 +49,11 @@ class ShouldValidateModel(models.Model):
 class ShouldValidateModelSerializer(serializers.ModelSerializer):
     renamed = serializers.CharField(source='should_validate_field', required=False)
 
-    def validate_renamed(self, value):
+    def validate_renamed(self, attrs, source):
+        value = attrs[source]
         if len(value) < 3:
             raise serializers.ValidationError('Minimum 3 characters.')
-        return value
+        return attrs
 
     class Meta:
         model = ShouldValidateModel
@@ -88,11 +102,8 @@ class TestAvoidValidation(TestCase):
     def test_serializer_errors_has_only_invalid_data_error(self):
         serializer = ValidationSerializer(data='invalid data')
         self.assertFalse(serializer.is_valid())
-        self.assertDictEqual(serializer.errors, {
-            'non_field_errors': [
-                'Invalid data. Expected a dictionary, but got %s.' % type('').__name__
-            ]
-        })
+        self.assertDictEqual(serializer.errors,
+                             {'non_field_errors': ['Invalid data']})
 
 
 # regression tests for issue: 1493
@@ -107,7 +118,7 @@ class ValidationMaxValueValidatorModelSerializer(serializers.ModelSerializer):
 
 
 class UpdateMaxValueValidationModel(generics.RetrieveUpdateDestroyAPIView):
-    queryset = ValidationMaxValueValidatorModel.objects.all()
+    model = ValidationMaxValueValidatorModel
     serializer_class = ValidationMaxValueValidatorModelSerializer
 
 
@@ -134,7 +145,7 @@ class TestMaxValueValidatorValidation(TestCase):
         request = factory.patch('/{0}'.format(obj.pk), {'number_value': 101}, format='json')
         view = UpdateMaxValueValidationModel().as_view()
         response = view(request, pk=obj.pk).render()
-        self.assertEqual(response.content, b'{"number_value":["Ensure this value is less than or equal to 100."]}')
+        self.assertEqual(response.content, b'{"number_value": ["Ensure this value is less than or equal to 100."]}')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
 
@@ -161,23 +172,17 @@ class TestChoiceFieldChoicesValidate(TestCase):
         f = serializers.ChoiceField(choices=self.CHOICES)
         value = self.CHOICES[0][0]
         try:
-            f.to_internal_value(value)
-        except serializers.ValidationError:
+            f.validate(value)
+        except ValidationError:
             self.fail("Value %s does not validate" % str(value))
 
-
-class RegexSerializer(serializers.Serializer):
-    pin = serializers.CharField(
-        validators=[RegexValidator(regex=re.compile('^[0-9]{4,6}$'),
-                                   message='A PIN is 4-6 digits')])
-
-expected_repr = """
-RegexSerializer():
-    pin = CharField(validators=[<django.core.validators.RegexValidator object>])
-""".strip()
-
-
-class TestRegexSerializer(TestCase):
-    def test_regex_repr(self):
-        serializer_repr = repr(RegexSerializer())
-        assert serializer_repr == expected_repr
+    def test_nested_choices(self):
+        """
+        Make sure a nested value for choices works as expected.
+        """
+        f = serializers.ChoiceField(choices=self.CHOICES_NESTED)
+        value = self.CHOICES_NESTED[0][1][0][0]
+        try:
+            f.validate(value)
+        except ValidationError:
+            self.fail("Value %s does not validate" % str(value))

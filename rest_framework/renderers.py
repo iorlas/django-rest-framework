@@ -12,23 +12,18 @@ import json
 import django
 from django import forms
 from django.core.exceptions import ImproperlyConfigured
-from django.core.paginator import Page
 from django.http.multipartparser import parse_header
-from django.template import Context, RequestContext, loader, Template
+from django.template import RequestContext, loader, Template
 from django.test.client import encode_multipart
 from django.utils import six
-from rest_framework import exceptions, serializers, status, VERSION
-from rest_framework.compat import SHORT_SEPARATORS, LONG_SEPARATORS, INDENT_SEPARATORS
+from django.utils.xmlutils import SimplerXMLGenerator
+from rest_framework.compat import StringIO, smart_text, yaml
 from rest_framework.exceptions import ParseError
 from rest_framework.settings import api_settings
 from rest_framework.request import is_form_media_type, override_method
 from rest_framework.utils import encoders
 from rest_framework.utils.breadcrumbs import get_breadcrumbs
-from rest_framework.utils.field_mapping import ClassLookupDict
-
-
-def zero_as_none(value):
-    return None if value == 0 else value
+from rest_framework import exceptions, status, VERSION
 
 
 class BaseRenderer(object):
@@ -43,19 +38,19 @@ class BaseRenderer(object):
     render_style = 'text'
 
     def render(self, data, accepted_media_type=None, renderer_context=None):
-        raise NotImplementedError('Renderer class requires .render() to be implemented')
+        raise NotImplemented('Renderer class requires .render() to be implemented')
 
 
 class JSONRenderer(BaseRenderer):
     """
     Renderer which serializes to JSON.
+    Applies JSON's backslash-u character escaping for non-ascii characters.
     """
 
     media_type = 'application/json'
     format = 'json'
     encoder_class = encoders.JSONEncoder
-    ensure_ascii = not api_settings.UNICODE_JSON
-    compact = api_settings.COMPACT_JSON
+    ensure_ascii = True
 
     # We don't set a charset because JSON is a binary encoding,
     # that can be encoded as utf-8, utf-16 or utf-32.
@@ -67,10 +62,9 @@ class JSONRenderer(BaseRenderer):
         if accepted_media_type:
             # If the media type looks like 'application/json; indent=4',
             # then pretty print the result.
-            # Note that we coerce `indent=0` into `indent=None`.
             base_media_type, params = parse_header(accepted_media_type.encode('ascii'))
             try:
-                return zero_as_none(max(min(int(params['indent']), 8), 0))
+                return max(min(int(params['indent']), 8), 0)
             except (KeyError, ValueError, TypeError):
                 pass
 
@@ -88,15 +82,9 @@ class JSONRenderer(BaseRenderer):
         renderer_context = renderer_context or {}
         indent = self.get_indent(accepted_media_type, renderer_context)
 
-        if indent is None:
-            separators = SHORT_SEPARATORS if self.compact else LONG_SEPARATORS
-        else:
-            separators = INDENT_SEPARATORS
-
         ret = json.dumps(
             data, cls=self.encoder_class,
-            indent=indent, ensure_ascii=self.ensure_ascii,
-            separators=separators
+            indent=indent, ensure_ascii=self.ensure_ascii
         )
 
         # On python 2.x json.dumps() returns bytestrings if ensure_ascii=True,
@@ -104,13 +92,130 @@ class JSONRenderer(BaseRenderer):
         # and may (or may not) be unicode.
         # On python 3.x json.dumps() returns unicode strings.
         if isinstance(ret, six.text_type):
-            # We always fully escape \u2028 and \u2029 to ensure we output JSON
-            # that is a strict javascript subset. If bytes were returned
-            # by json.dumps() then we don't have these characters in any case.
-            # See: http://timelessrepo.com/json-isnt-a-javascript-subset
-            ret = ret.replace('\u2028', '\\u2028').replace('\u2029', '\\u2029')
             return bytes(ret.encode('utf-8'))
         return ret
+
+
+class UnicodeJSONRenderer(JSONRenderer):
+    ensure_ascii = False
+    """
+    Renderer which serializes to JSON.
+    Does *not* apply JSON's character escaping for non-ascii characters.
+    """
+
+
+class JSONPRenderer(JSONRenderer):
+    """
+    Renderer which serializes to json,
+    wrapping the json output in a callback function.
+    """
+
+    media_type = 'application/javascript'
+    format = 'jsonp'
+    callback_parameter = 'callback'
+    default_callback = 'callback'
+    charset = 'utf-8'
+
+    def get_callback(self, renderer_context):
+        """
+        Determine the name of the callback to wrap around the json output.
+        """
+        request = renderer_context.get('request', None)
+        params = request and request.QUERY_PARAMS or {}
+        return params.get(self.callback_parameter, self.default_callback)
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        """
+        Renders into jsonp, wrapping the json output in a callback function.
+
+        Clients may set the callback function name using a query parameter
+        on the URL, for example: ?callback=exampleCallbackName
+        """
+        renderer_context = renderer_context or {}
+        callback = self.get_callback(renderer_context)
+        json = super(JSONPRenderer, self).render(data, accepted_media_type,
+                                                 renderer_context)
+        return callback.encode(self.charset) + b'(' + json + b');'
+
+
+class XMLRenderer(BaseRenderer):
+    """
+    Renderer which serializes to XML.
+    """
+
+    media_type = 'application/xml'
+    format = 'xml'
+    charset = 'utf-8'
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        """
+        Renders `data` into serialized XML.
+        """
+        if data is None:
+            return ''
+
+        stream = StringIO()
+
+        xml = SimplerXMLGenerator(stream, self.charset)
+        xml.startDocument()
+        xml.startElement("root", {})
+
+        self._to_xml(xml, data)
+
+        xml.endElement("root")
+        xml.endDocument()
+        return stream.getvalue()
+
+    def _to_xml(self, xml, data):
+        if isinstance(data, (list, tuple)):
+            for item in data:
+                xml.startElement("list-item", {})
+                self._to_xml(xml, item)
+                xml.endElement("list-item")
+
+        elif isinstance(data, dict):
+            for key, value in six.iteritems(data):
+                xml.startElement(key, {})
+                self._to_xml(xml, value)
+                xml.endElement(key)
+
+        elif data is None:
+            # Don't output any value
+            pass
+
+        else:
+            xml.characters(smart_text(data))
+
+
+class YAMLRenderer(BaseRenderer):
+    """
+    Renderer which serializes to YAML.
+    """
+
+    media_type = 'application/yaml'
+    format = 'yaml'
+    encoder = encoders.SafeDumper
+    charset = 'utf-8'
+    ensure_ascii = True
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        """
+        Renders `data` into serialized YAML.
+        """
+        assert yaml, 'YAMLRenderer requires pyyaml to be installed'
+
+        if data is None:
+            return ''
+
+        return yaml.dump(data, stream=None, encoding=self.charset, Dumper=self.encoder, allow_unicode=not self.ensure_ascii)
+
+
+class UnicodeYAMLRenderer(YAMLRenderer):
+    """
+    Renderer which serializes to YAML.
+    Does *not* apply character escaping for non-ascii characters.
+    """
+    ensure_ascii = False
 
 
 class TemplateHTMLRenderer(BaseRenderer):
@@ -183,9 +288,7 @@ class TemplateHTMLRenderer(BaseRenderer):
             return view.get_template_names()
         elif hasattr(view, 'template_name'):
             return [view.template_name]
-        raise ImproperlyConfigured(
-            'Returned a template response with no `template_name` attribute set on either the view or response'
-        )
+        raise ImproperlyConfigured('Returned a template response with no `template_name` attribute set on either the view or response')
 
     def get_exception_template(self, response):
         template_names = [name % {'status_code': response.status_code}
@@ -244,116 +347,18 @@ class HTMLFormRenderer(BaseRenderer):
     """
     media_type = 'text/html'
     format = 'form'
+    template = 'rest_framework/form.html'
     charset = 'utf-8'
-    template_pack = 'rest_framework/horizontal/'
-    base_template = 'form.html'
-
-    default_style = ClassLookupDict({
-        serializers.Field: {
-            'base_template': 'input.html',
-            'input_type': 'text'
-        },
-        serializers.EmailField: {
-            'base_template': 'input.html',
-            'input_type': 'email'
-        },
-        serializers.URLField: {
-            'base_template': 'input.html',
-            'input_type': 'url'
-        },
-        serializers.IntegerField: {
-            'base_template': 'input.html',
-            'input_type': 'number'
-        },
-        serializers.DateTimeField: {
-            'base_template': 'input.html',
-            'input_type': 'datetime-local'
-        },
-        serializers.DateField: {
-            'base_template': 'input.html',
-            'input_type': 'date'
-        },
-        serializers.TimeField: {
-            'base_template': 'input.html',
-            'input_type': 'time'
-        },
-        serializers.FileField: {
-            'base_template': 'input.html',
-            'input_type': 'file'
-        },
-        serializers.BooleanField: {
-            'base_template': 'checkbox.html'
-        },
-        serializers.ChoiceField: {
-            'base_template': 'select.html',  # Also valid: 'radio.html'
-        },
-        serializers.MultipleChoiceField: {
-            'base_template': 'select_multiple.html',  # Also valid: 'checkbox_multiple.html'
-        },
-        serializers.RelatedField: {
-            'base_template': 'select.html',  # Also valid: 'radio.html'
-        },
-        serializers.ManyRelatedField: {
-            'base_template': 'select_multiple.html',  # Also valid: 'checkbox_multiple.html'
-        },
-        serializers.Serializer: {
-            'base_template': 'fieldset.html'
-        },
-        serializers.ListSerializer: {
-            'base_template': 'list_fieldset.html'
-        }
-    })
-
-    def render_field(self, field, parent_style):
-        if isinstance(field._field, serializers.HiddenField):
-            return ''
-
-        style = dict(self.default_style[field])
-        style.update(field.style)
-        if 'template_pack' not in style:
-            style['template_pack'] = parent_style.get('template_pack', self.template_pack)
-        style['renderer'] = self
-
-        if style.get('input_type') == 'datetime-local' and isinstance(field.value, six.text_type):
-            field.value = field.value.rstrip('Z')
-
-        if 'template' in style:
-            template_name = style['template']
-        else:
-            template_name = style['template_pack'].strip('/') + '/' + style['base_template']
-
-        template = loader.get_template(template_name)
-        context = Context({'field': field, 'style': style})
-        return template.render(context)
 
     def render(self, data, accepted_media_type=None, renderer_context=None):
         """
         Render serializer data and return an HTML form, as a string.
         """
-        form = data.serializer
-        meta = getattr(form, 'Meta', None)
-        style = getattr(meta, 'style', {})
-        if 'template_pack' not in style:
-            style['template_pack'] = self.template_pack
-        if 'base_template' not in style:
-            style['base_template'] = self.base_template
-        style['renderer'] = self
-
-        # This API needs to be finessed and finalized for 3.1
-        if 'template' in renderer_context:
-            template_name = renderer_context['template']
-        elif 'template' in style:
-            template_name = style['template']
-        else:
-            template_name = style['template_pack'].strip('/') + '/' + style['base_template']
-
         renderer_context = renderer_context or {}
         request = renderer_context['request']
-        template = loader.get_template(template_name)
-        context = RequestContext(request, {
-            'form': form,
-            'style': style
-        })
+
+        template = loader.get_template(self.template)
+        context = RequestContext(request, {'form': data})
         return template.render(context)
 
 
@@ -421,114 +426,62 @@ class BrowsableAPIRenderer(BaseRenderer):
             return False  # Doesn't have permissions
         return True
 
-    def _get_serializer(self, serializer_class, view_instance, request, *args, **kwargs):
-        kwargs['context'] = {
-            'request': request,
-            'format': self.format,
-            'view': view_instance
-        }
-        return serializer_class(*args, **kwargs)
-
-    def get_rendered_html_form(self, data, view, method, request):
+    def get_rendered_html_form(self, view, method, request):
         """
         Return a string representing a rendered HTML form, possibly bound to
         either the input or output data.
 
         In the absence of the View having an associated form then return None.
         """
-        # See issue #2089 for refactoring this.
-        serializer = getattr(data, 'serializer', None)
-        if serializer and not getattr(serializer, 'many', False):
-            instance = getattr(serializer, 'instance', None)
-            if isinstance(instance, Page):
-                instance = None
-        else:
-            instance = None
-
-        # If this is valid serializer data, and the form is for the same
-        # HTTP method as was used in the request then use the existing
-        # serializer instance, rather than dynamically creating a new one.
-        if request.method == method and serializer is not None:
+        if request.method == method:
             try:
-                kwargs = {'data': request.data}
+                data = request.DATA
+                files = request.FILES
             except ParseError:
-                kwargs = {}
-            existing_serializer = serializer
+                data = None
+                files = None
         else:
-            kwargs = {}
-            existing_serializer = None
+            data = None
+            files = None
 
         with override_method(view, request, method) as request:
-            if not self.show_form_for_method(view, method, request, instance):
+            obj = getattr(view, 'object', None)
+            if not self.show_form_for_method(view, method, request, obj):
                 return
 
             if method in ('DELETE', 'OPTIONS'):
                 return True  # Don't actually need to return a form
 
-            has_serializer = getattr(view, 'get_serializer', None)
-            has_serializer_class = getattr(view, 'serializer_class', None)
-
             if (
-                (not has_serializer and not has_serializer_class) or
-                not any(is_form_media_type(parser.media_type) for parser in view.parser_classes)
+                not getattr(view, 'get_serializer', None)
+                or not any(is_form_media_type(parser.media_type) for parser in view.parser_classes)
             ):
                 return
 
-            if existing_serializer is not None:
-                serializer = existing_serializer
-            else:
-                if has_serializer:
-                    if method in ('PUT', 'PATCH'):
-                        serializer = view.get_serializer(instance=instance, **kwargs)
-                    else:
-                        serializer = view.get_serializer(**kwargs)
-                else:
-                    # at this point we must have a serializer_class
-                    if method in ('PUT', 'PATCH'):
-                        serializer = self._get_serializer(view.serializer_class, view,
-                                                          request, instance=instance, **kwargs)
-                    else:
-                        serializer = self._get_serializer(view.serializer_class, view,
-                                                          request, **kwargs)
-
-            if hasattr(serializer, 'initial_data'):
-                serializer.is_valid()
+            serializer = view.get_serializer(instance=obj, data=data, files=files)
+            serializer.is_valid()
+            data = serializer.data
 
             form_renderer = self.form_renderer_class()
-            return form_renderer.render(
-                serializer.data,
-                self.accepted_media_type,
-                dict(
-                    list(self.renderer_context.items()) +
-                    [('template', 'rest_framework/api_form.html')]
-                )
-            )
+            return form_renderer.render(data, self.accepted_media_type, self.renderer_context)
 
-    def get_raw_data_form(self, data, view, method, request):
+    def get_raw_data_form(self, view, method, request):
         """
         Returns a form that allows for arbitrary content types to be tunneled
         via standard HTML forms.
         (Which are typically application/x-www-form-urlencoded)
         """
-        # See issue #2089 for refactoring this.
-        serializer = getattr(data, 'serializer', None)
-        if serializer and not getattr(serializer, 'many', False):
-            instance = getattr(serializer, 'instance', None)
-            if isinstance(instance, Page):
-                instance = None
-        else:
-            instance = None
-
         with override_method(view, request, method) as request:
             # If we're not using content overloading there's no point in
             # supplying a generic form, as the view won't treat the form's
             # value as the content of the request.
-            if not (api_settings.FORM_CONTENT_OVERRIDE and
-                    api_settings.FORM_CONTENTTYPE_OVERRIDE):
+            if not (api_settings.FORM_CONTENT_OVERRIDE
+                    and api_settings.FORM_CONTENTTYPE_OVERRIDE):
                 return None
 
             # Check permissions
-            if not self.show_form_for_method(view, method, request, instance):
+            obj = getattr(view, 'object', None)
+            if not self.show_form_for_method(view, method, request, obj):
                 return
 
             # If possible, serialize the initial content for the generic form
@@ -538,10 +491,12 @@ class BrowsableAPIRenderer(BaseRenderer):
                 # View has a serializer defined and parser class has a
                 # corresponding renderer that can be used to render the data.
 
-                if method in ('PUT', 'PATCH'):
-                    serializer = view.get_serializer(instance=instance)
-                else:
-                    serializer = view.get_serializer()
+                # Get a read-only version of the serializer
+                serializer = view.get_serializer(instance=obj)
+                if obj is None:
+                    for name, field in serializer.fields.items():
+                        if getattr(field, 'read_only', None):
+                            del serializer.fields[name]
 
                 # Render the raw data content
                 renderer = renderer_class()
@@ -598,9 +553,9 @@ class BrowsableAPIRenderer(BaseRenderer):
 
         renderer = self.get_default_renderer(view)
 
-        raw_data_post_form = self.get_raw_data_form(data, view, 'POST', request)
-        raw_data_put_form = self.get_raw_data_form(data, view, 'PUT', request)
-        raw_data_patch_form = self.get_raw_data_form(data, view, 'PATCH', request)
+        raw_data_post_form = self.get_raw_data_form(view, 'POST', request)
+        raw_data_put_form = self.get_raw_data_form(view, 'PUT', request)
+        raw_data_patch_form = self.get_raw_data_form(view, 'PATCH', request)
         raw_data_put_or_patch_form = raw_data_put_form or raw_data_patch_form
 
         response_headers = dict(response.items())
@@ -611,11 +566,6 @@ class BrowsableAPIRenderer(BaseRenderer):
                 renderer_content_type += ' ;%s' % renderer.charset
         response_headers['Content-Type'] = renderer_content_type
 
-        if hasattr(view, 'paginator') and view.paginator.display_page_controls:
-            paginator = view.paginator
-        else:
-            paginator = None
-
         context = {
             'content': self.get_content(renderer, data, accepted_media_type, renderer_context),
             'view': view,
@@ -624,16 +574,15 @@ class BrowsableAPIRenderer(BaseRenderer):
             'description': self.get_description(view),
             'name': self.get_name(view),
             'version': VERSION,
-            'paginator': paginator,
             'breadcrumblist': self.get_breadcrumbs(request),
             'allowed_methods': view.allowed_methods,
             'available_formats': [renderer_cls.format for renderer_cls in view.renderer_classes],
             'response_headers': response_headers,
 
-            'put_form': self.get_rendered_html_form(data, view, 'PUT', request),
-            'post_form': self.get_rendered_html_form(data, view, 'POST', request),
-            'delete_form': self.get_rendered_html_form(data, view, 'DELETE', request),
-            'options_form': self.get_rendered_html_form(data, view, 'OPTIONS', request),
+            'put_form': self.get_rendered_html_form(view, 'PUT', request),
+            'post_form': self.get_rendered_html_form(view, 'POST', request),
+            'delete_form': self.get_rendered_html_form(view, 'DELETE', request),
+            'options_form': self.get_rendered_html_form(view, 'OPTIONS', request),
 
             'raw_data_put_form': raw_data_put_form,
             'raw_data_post_form': raw_data_post_form,

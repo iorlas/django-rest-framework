@@ -1,32 +1,35 @@
 from __future__ import unicode_literals, absolute_import
 from django import template
 from django.core.urlresolvers import reverse, NoReverseMatch
+from django.http import QueryDict
 from django.utils import six
-from django.utils.encoding import iri_to_uri, force_text
+from django.utils.encoding import iri_to_uri
 from django.utils.html import escape
 from django.utils.safestring import SafeData, mark_safe
 from django.utils.html import smart_urlquote
-from rest_framework.renderers import HTMLFormRenderer
-from rest_framework.utils.urls import replace_query_param
+from rest_framework.compat import urlparse, force_text
 import re
 
 register = template.Library()
+
+
+def replace_query_param(url, key, val):
+    """
+    Given a URL and a key/val pair, set or replace an item in the query
+    parameters of the URL, and return the new URL.
+    """
+    (scheme, netloc, path, query, fragment) = urlparse.urlsplit(url)
+    query_dict = QueryDict(query).copy()
+    query_dict[key] = val
+    query = query_dict.urlencode()
+    return urlparse.urlunsplit((scheme, netloc, path, query, fragment))
+
 
 # Regex for adding classes to html snippets
 class_re = re.compile(r'(?<=class=["\'])(.*)(?=["\'])')
 
 
-@register.simple_tag
-def get_pagination_html(pager):
-    return pager.to_html()
-
-
-@register.simple_tag
-def render_field(field, style=None):
-    style = style or {}
-    renderer = style.get('renderer', HTMLFormRenderer())
-    return renderer.render_field(field, style)
-
+# And the template tags themselves...
 
 @register.simple_tag
 def optional_login(request):
@@ -72,7 +75,7 @@ def add_query_param(request, key, val):
     """
     iri = request.get_full_path()
     uri = iri_to_uri(iri)
-    return escape(replace_query_param(uri, key, val))
+    return replace_query_param(uri, key, val)
 
 
 @register.filter
@@ -143,9 +146,7 @@ def urlize_quoted_links(text, trim_url_limit=None, nofollow=True, autoescape=Tru
 
     If autoescape is True, the link text and URLs will get autoescaped.
     """
-    def trim_url(x, limit=trim_url_limit):
-        return limit is not None and (len(x) > limit and ('%s...' % x[:max(0, limit - 3)])) or x
-
+    trim_url = lambda x, limit=trim_url_limit: limit is not None and (len(x) > limit and ('%s...' % x[:max(0, limit - 3)])) or x
     safe_input = isinstance(text, SafeData)
     words = word_split_re.split(force_text(text))
     for i, word in enumerate(words):
@@ -162,8 +163,8 @@ def urlize_quoted_links(text, trim_url_limit=None, nofollow=True, autoescape=Tru
                     lead = lead + opening
                 # Keep parentheses at the end only if they're balanced.
                 if (
-                    middle.endswith(closing) and
-                    middle.count(closing) == middle.count(opening) + 1
+                    middle.endswith(closing)
+                    and middle.count(closing) == middle.count(opening) + 1
                 ):
                     middle = middle[:-len(closing)]
                     trail = closing + trail

@@ -130,24 +130,34 @@ You can override the `BrowsableAPIRenderer.get_context()` method to customise th
 
 For more advanced customization, such as not having a Bootstrap basis or tighter integration with the rest of your site, you can simply choose not to have `api.html` extend `base.html`.  Then the page content and capabilities are entirely up to you.
 
-#### Handling `ChoiceField` with large numbers of items.
+#### Autocompletion
 
-When a relationship or `ChoiceField` has too many items, rendering the widget containing all the options can become very slow, and cause the browsable API rendering to perform poorly.
+When a `ChoiceField` has too many items, rendering the widget containing all the options can become very slow, and cause the browsable API rendering to perform poorly.  One solution is to replace the selector by an autocomplete widget, that only loads and renders a subset of the available options as needed.
 
-The simplest option in this case is to replace the select input with a standard text input. For example:
+There are [a variety of packages for autocomplete widgets][autocomplete-packages], such as [django-autocomplete-light][django-autocomplete-light].  To setup `django-autocomplete-light`, follow the [installation documentation][django-autocomplete-light-install], add the the following to the `api.html` template:
 
-     author = serializers.HyperlinkedRelatedField(
-        queryset=User.objects.all(),
-        style={'base_template': 'input.html'}
-    )
+    {% block script %}
+    {{ block.super }}
+    {% include 'autocomplete_light/static.html' %}
+    {% endblock %}
 
-#### Autocomplete
+You can now add the `autocomplete_light.ChoiceWidget` widget to the serializer field.
 
-An alternative, but more complex option would be to replace the input with an autocomplete widget, that only loads and renders a subset of the available options as needed. If you need to do this you'll need to do some work to build a custom autocomplete HTML template yourself.
+    import autocomplete_light
 
-There are [a variety of packages for autocomplete widgets][autocomplete-packages], such as [django-autocomplete-light][django-autocomplete-light], that you may want to refer to. Note that you will not be able to simply include these components as standard widgets, but will need to write the HTML template explicitly. This is because REST framework 3.0 no longer supports the `widget` keyword argument since it now uses templated HTML generation.
+    class BookSerializer(serializers.ModelSerializer):
+        author = serializers.ChoiceField(
+            widget=autocomplete_light.ChoiceWidget('AuthorAutocomplete')
+        )
 
-Better support for autocomplete inputs is planned in future versions.
+        class Meta:
+            model = Book
+
+---
+
+![Autocomplete][autocomplete-image]
+
+*Screenshot of the autocomplete-light widget*
 
 ---
 
@@ -165,3 +175,4 @@ Better support for autocomplete inputs is planned in future versions.
 [autocomplete-packages]: https://www.djangopackages.com/grids/g/auto-complete/
 [django-autocomplete-light]: https://github.com/yourlabs/django-autocomplete-light
 [django-autocomplete-light-install]: http://django-autocomplete-light.readthedocs.org/en/latest/#install
+[autocomplete-image]: ../img/autocomplete.png

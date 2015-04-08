@@ -6,6 +6,7 @@ At the moment relationships within our API are represented by using primary keys
 
 Right now we have endpoints for 'snippets' and 'users', but we don't have a single entry point to our API.  To create one, we'll use a regular function-based view and the `@api_view` decorator we introduced earlier. In your `snippets/views.py` add:
 
+    from rest_framework import renderers
     from rest_framework.decorators import api_view
     from rest_framework.response import Response
     from rest_framework.reverse import reverse
@@ -44,7 +45,7 @@ Instead of using a concrete generic view, we'll use the base class for represent
 As usual we need to add the new views that we've created in to our URLconf.
 We'll add a url pattern for our new API root in `snippets/urls.py`:
 
-    url(r'^$', views.api_root),
+    url(r'^$', 'api_root'),
 
 And then add a url pattern for the snippet highlights:
 
@@ -75,7 +76,7 @@ The `HyperlinkedModelSerializer` has the following differences from `ModelSerial
 We can easily re-write our existing serializers to use hyperlinking. In your `snippets/serializers.py` add:
 
     class SnippetSerializer(serializers.HyperlinkedModelSerializer):
-        owner = serializers.ReadOnlyField(source='owner.username')
+        owner = serializers.Field(source='owner.username')
         highlight = serializers.HyperlinkedIdentityField(view_name='snippet-highlight', format='html')
 
         class Meta:
@@ -85,7 +86,7 @@ We can easily re-write our existing serializers to use hyperlinking. In your `sn
 
 
     class UserSerializer(serializers.HyperlinkedModelSerializer):
-        snippets = serializers.HyperlinkedRelatedField(many=True, view_name='snippet-detail', read_only=True)
+        snippets = serializers.HyperlinkedRelatedField(many=True, view_name='snippet-detail')
 
         class Meta:
             model = User
@@ -104,11 +105,7 @@ If we're going to have a hyperlinked API, we need to make sure we name our URL p
 * Our user serializer includes a field that refers to `'snippet-detail'`.
 * Our snippet and user serializers include `'url'` fields that by default will refer to `'{model_name}-detail'`, which in this case will be `'snippet-detail'` and `'user-detail'`.
 
-After adding all those names into our URLconf, our final `snippets/urls.py` file should look like this:
-
-    from django.conf.urls import url, include
-    from rest_framework.urlpatterns import format_suffix_patterns
-    from snippets import views
+After adding all those names into our URLconf, our final `snippets/urls.py` file should look something like this:
 
     # API endpoints
     urlpatterns = format_suffix_patterns([
@@ -140,10 +137,10 @@ After adding all those names into our URLconf, our final `snippets/urls.py` file
 
 The list views for users and code snippets could end up returning quite a lot of instances, so really we'd like to make sure we paginate the results, and allow the API client to step through each of the individual pages.
 
-We can change the default list style to use pagination, by modifying our `tutorial/settings.py` file slightly.  Add the following setting:
+We can change the default list style to use pagination, by modifying our `settings.py` file slightly.  Add the following setting:
 
     REST_FRAMEWORK = {
-        'PAGE_SIZE': 10
+        'PAGINATE_BY': 10
     }
 
 Note that settings in REST framework are all namespaced into a single dictionary setting, named 'REST_FRAMEWORK', which helps keep them well separated from your other project settings.
