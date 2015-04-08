@@ -5,8 +5,7 @@ it is initialized with unrendered data, instead of a pre-rendered string.
 The appropriate renderer is called during Django's template response rendering.
 """
 from __future__ import unicode_literals
-import django
-from django.core.handlers.wsgi import STATUS_CODE_TEXT
+from django.utils.six.moves.http_client import responses
 from django.template.response import SimpleTemplateResponse
 from django.utils import six
 
@@ -16,9 +15,6 @@ class Response(SimpleTemplateResponse):
     An HttpResponse that allows its data to be rendered into
     arbitrary media types.
     """
-    # TODO: remove that once Django 1.3 isn't supported
-    if django.VERSION >= (1, 4):
-        rendering_attrs = SimpleTemplateResponse.rendering_attrs + ['_closable_objects']
 
     def __init__(self, data=None, status=None,
                  template_name=None, headers=None,
@@ -81,14 +77,18 @@ class Response(SimpleTemplateResponse):
         """
         # TODO: Deprecate and use a template tag instead
         # TODO: Status code text for RFC 6585 status codes
-        return STATUS_CODE_TEXT.get(self.status_code, '')
+        return responses.get(self.status_code, '')
 
     def __getstate__(self):
         """
-        Remove attributes from the response that shouldn't be cached
+        Remove attributes from the response that shouldn't be cached.
         """
         state = super(Response, self).__getstate__()
-        for key in ('accepted_renderer', 'renderer_context', 'data'):
+        for key in (
+            'accepted_renderer', 'renderer_context', 'resolver_match',
+            'client', 'request', 'wsgi_request'
+        ):
             if key in state:
                 del state[key]
+        state['_closable_objects'] = []
         return state

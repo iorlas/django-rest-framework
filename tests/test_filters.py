@@ -2,23 +2,31 @@ from __future__ import unicode_literals
 import datetime
 from decimal import Decimal
 from django.db import models
+from django.conf.urls import patterns, url
 from django.core.urlresolvers import reverse
 from django.test import TestCase
+from django.test.utils import override_settings
 from django.utils import unittest
-from django.conf.urls import patterns, url
+from django.utils.dateparse import parse_date
+from django.utils.six.moves import reload_module
 from rest_framework import generics, serializers, status, filters
 from rest_framework.compat import django_filters
 from rest_framework.test import APIRequestFactory
 from .models import BaseFilterableItem, FilterableItem, BasicModel
-from .utils import temporary_setting
+
 
 factory = APIRequestFactory()
 
 
 if django_filters:
+    class FilterableItemSerializer(serializers.ModelSerializer):
+        class Meta:
+            model = FilterableItem
+
     # Basic filter on a list view.
     class FilterFieldsRootView(generics.ListCreateAPIView):
-        model = FilterableItem
+        queryset = FilterableItem.objects.all()
+        serializer_class = FilterableItemSerializer
         filter_fields = ['decimal', 'date']
         filter_backends = (filters.DjangoFilterBackend,)
 
@@ -33,7 +41,8 @@ if django_filters:
             fields = ['text', 'decimal', 'date']
 
     class FilterClassRootView(generics.ListCreateAPIView):
-        model = FilterableItem
+        queryset = FilterableItem.objects.all()
+        serializer_class = FilterableItemSerializer
         filter_class = SeveralFieldsFilter
         filter_backends = (filters.DjangoFilterBackend,)
 
@@ -46,12 +55,14 @@ if django_filters:
             fields = ['text']
 
     class IncorrectlyConfiguredRootView(generics.ListCreateAPIView):
-        model = FilterableItem
+        queryset = FilterableItem.objects.all()
+        serializer_class = FilterableItemSerializer
         filter_class = MisconfiguredFilter
         filter_backends = (filters.DjangoFilterBackend,)
 
     class FilterClassDetailView(generics.RetrieveAPIView):
-        model = FilterableItem
+        queryset = FilterableItem.objects.all()
+        serializer_class = FilterableItemSerializer
         filter_class = SeveralFieldsFilter
         filter_backends = (filters.DjangoFilterBackend,)
 
@@ -63,15 +74,12 @@ if django_filters:
             model = BaseFilterableItem
 
     class BaseFilterableItemFilterRootView(generics.ListCreateAPIView):
-        model = FilterableItem
+        queryset = FilterableItem.objects.all()
+        serializer_class = FilterableItemSerializer
         filter_class = BaseFilterableItemFilter
         filter_backends = (filters.DjangoFilterBackend,)
 
     # Regression test for #814
-    class FilterableItemSerializer(serializers.ModelSerializer):
-        class Meta:
-            model = FilterableItem
-
     class FilterFieldsQuerysetView(generics.ListCreateAPIView):
         queryset = FilterableItem.objects.all()
         serializer_class = FilterableItemSerializer
@@ -97,7 +105,7 @@ if django_filters:
 
 class CommonFilteringTestCase(TestCase):
     def _serialize_object(self, obj):
-        return {'id': obj.id, 'text': obj.text, 'decimal': obj.decimal, 'date': obj.date}
+        return {'id': obj.id, 'text': obj.text, 'decimal': str(obj.decimal), 'date': obj.date.isoformat()}
 
     def setUp(self):
         """
@@ -140,7 +148,7 @@ class IntegrationTestFiltering(CommonFilteringTestCase):
         request = factory.get('/', {'decimal': '%s' % search_decimal})
         response = view(request).render()
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        expected_data = [f for f in self.data if f['decimal'] == search_decimal]
+        expected_data = [f for f in self.data if Decimal(f['decimal']) == search_decimal]
         self.assertEqual(response.data, expected_data)
 
         # Tests that the date filter works.
@@ -148,7 +156,7 @@ class IntegrationTestFiltering(CommonFilteringTestCase):
         request = factory.get('/', {'date': '%s' % search_date})  # search_date str: '2012-09-22'
         response = view(request).render()
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        expected_data = [f for f in self.data if f['date'] == search_date]
+        expected_data = [f for f in self.data if parse_date(f['date']) == search_date]
         self.assertEqual(response.data, expected_data)
 
     @unittest.skipUnless(django_filters, 'django-filter not installed')
@@ -163,7 +171,7 @@ class IntegrationTestFiltering(CommonFilteringTestCase):
         request = factory.get('/', {'decimal': '%s' % search_decimal})
         response = view(request).render()
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        expected_data = [f for f in self.data if f['decimal'] == search_decimal]
+        expected_data = [f for f in self.data if Decimal(f['decimal']) == search_decimal]
         self.assertEqual(response.data, expected_data)
 
     @unittest.skipUnless(django_filters, 'django-filter not installed')
@@ -196,7 +204,7 @@ class IntegrationTestFiltering(CommonFilteringTestCase):
         request = factory.get('/', {'decimal': '%s' % search_decimal})
         response = view(request).render()
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        expected_data = [f for f in self.data if f['decimal'] < search_decimal]
+        expected_data = [f for f in self.data if Decimal(f['decimal']) < search_decimal]
         self.assertEqual(response.data, expected_data)
 
         # Tests that the date filter set with 'gt' in the filter class works.
@@ -204,7 +212,7 @@ class IntegrationTestFiltering(CommonFilteringTestCase):
         request = factory.get('/', {'date': '%s' % search_date})  # search_date str: '2012-10-02'
         response = view(request).render()
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        expected_data = [f for f in self.data if f['date'] > search_date]
+        expected_data = [f for f in self.data if parse_date(f['date']) > search_date]
         self.assertEqual(response.data, expected_data)
 
         # Tests that the text filter set with 'icontains' in the filter class works.
@@ -224,8 +232,8 @@ class IntegrationTestFiltering(CommonFilteringTestCase):
         })
         response = view(request).render()
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        expected_data = [f for f in self.data if f['date'] > search_date and
-                         f['decimal'] < search_decimal]
+        expected_data = [f for f in self.data if parse_date(f['date']) > search_date and
+                         Decimal(f['decimal']) < search_decimal]
         self.assertEqual(response.data, expected_data)
 
     @unittest.skipUnless(django_filters, 'django-filter not installed')
@@ -323,6 +331,11 @@ class SearchFilterModel(models.Model):
     text = models.CharField(max_length=100)
 
 
+class SearchFilterSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SearchFilterModel
+
+
 class SearchFilterTests(TestCase):
     def setUp(self):
         # Sequence of title/text is:
@@ -342,7 +355,8 @@ class SearchFilterTests(TestCase):
 
     def test_search(self):
         class SearchListView(generics.ListAPIView):
-            model = SearchFilterModel
+            queryset = SearchFilterModel.objects.all()
+            serializer_class = SearchFilterSerializer
             filter_backends = (filters.SearchFilter,)
             search_fields = ('title', 'text')
 
@@ -359,7 +373,8 @@ class SearchFilterTests(TestCase):
 
     def test_exact_search(self):
         class SearchListView(generics.ListAPIView):
-            model = SearchFilterModel
+            queryset = SearchFilterModel.objects.all()
+            serializer_class = SearchFilterSerializer
             filter_backends = (filters.SearchFilter,)
             search_fields = ('=title', 'text')
 
@@ -375,7 +390,8 @@ class SearchFilterTests(TestCase):
 
     def test_startswith_search(self):
         class SearchListView(generics.ListAPIView):
-            model = SearchFilterModel
+            queryset = SearchFilterModel.objects.all()
+            serializer_class = SearchFilterSerializer
             filter_backends = (filters.SearchFilter,)
             search_fields = ('title', '^text')
 
@@ -390,9 +406,12 @@ class SearchFilterTests(TestCase):
         )
 
     def test_search_with_nonstandard_search_param(self):
-        with temporary_setting('SEARCH_PARAM', 'query', module=filters):
+        with override_settings(REST_FRAMEWORK={'SEARCH_PARAM': 'query'}):
+            reload_module(filters)
+
             class SearchListView(generics.ListAPIView):
-                model = SearchFilterModel
+                queryset = SearchFilterModel.objects.all()
+                serializer_class = SearchFilterSerializer
                 filter_backends = (filters.SearchFilter,)
                 search_fields = ('title', 'text')
 
@@ -407,6 +426,58 @@ class SearchFilterTests(TestCase):
                 ]
             )
 
+        reload_module(filters)
+
+
+class AttributeModel(models.Model):
+    label = models.CharField(max_length=32)
+
+
+class SearchFilterModelM2M(models.Model):
+    title = models.CharField(max_length=20)
+    text = models.CharField(max_length=100)
+    attributes = models.ManyToManyField(AttributeModel)
+
+
+class SearchFilterM2MSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SearchFilterModelM2M
+
+
+class SearchFilterM2MTests(TestCase):
+    def setUp(self):
+        # Sequence of title/text/attributes is:
+        #
+        # z   abc [1, 2, 3]
+        # zz  bcd [1, 2, 3]
+        # zzz cde [1, 2, 3]
+        # ...
+        for idx in range(3):
+            label = 'w' * (idx + 1)
+            AttributeModel(label=label)
+
+        for idx in range(10):
+            title = 'z' * (idx + 1)
+            text = (
+                chr(idx + ord('a')) +
+                chr(idx + ord('b')) +
+                chr(idx + ord('c'))
+            )
+            SearchFilterModelM2M(title=title, text=text).save()
+        SearchFilterModelM2M.objects.get(title='zz').attributes.add(1, 2, 3)
+
+    def test_m2m_search(self):
+        class SearchListView(generics.ListAPIView):
+            queryset = SearchFilterModelM2M.objects.all()
+            serializer_class = SearchFilterM2MSerializer
+            filter_backends = (filters.SearchFilter,)
+            search_fields = ('=title', 'text', 'attributes__label')
+
+        view = SearchListView.as_view()
+        request = factory.get('/', {'search': 'zz'})
+        response = view(request)
+        self.assertEqual(len(response.data), 1)
+
 
 class OrderingFilterModel(models.Model):
     title = models.CharField(max_length=20)
@@ -418,12 +489,22 @@ class OrderingFilterRelatedModel(models.Model):
                                        related_name="relateds")
 
 
+class OrderingFilterSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderingFilterModel
+
+
 class DjangoFilterOrderingModel(models.Model):
     date = models.DateField()
     text = models.CharField(max_length=10)
 
     class Meta:
         ordering = ['-date']
+
+
+class DjangoFilterOrderingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DjangoFilterOrderingModel
 
 
 class DjangoFilterOrderingTests(TestCase):
@@ -442,9 +523,11 @@ class DjangoFilterOrderingTests(TestCase):
         for d in data:
             DjangoFilterOrderingModel.objects.create(**d)
 
+    @unittest.skipUnless(django_filters, 'django-filter not installed')
     def test_default_ordering(self):
         class DjangoFilterOrderingView(generics.ListAPIView):
-            model = DjangoFilterOrderingModel
+            serializer_class = DjangoFilterOrderingSerializer
+            queryset = DjangoFilterOrderingModel.objects.all()
             filter_backends = (filters.DjangoFilterBackend,)
             filter_fields = ['text']
             ordering = ('-date',)
@@ -456,9 +539,9 @@ class DjangoFilterOrderingTests(TestCase):
         self.assertEqual(
             response.data,
             [
-                {'id': 3, 'date': datetime.date(2014, 10, 8), 'text': 'cde'},
-                {'id': 2, 'date': datetime.date(2013, 10, 8), 'text': 'bcd'},
-                {'id': 1, 'date': datetime.date(2012, 10, 8), 'text': 'abc'}
+                {'id': 3, 'date': '2014-10-08', 'text': 'cde'},
+                {'id': 2, 'date': '2013-10-08', 'text': 'bcd'},
+                {'id': 1, 'date': '2012-10-08', 'text': 'abc'}
             ]
         )
 
@@ -485,7 +568,8 @@ class OrderingFilterTests(TestCase):
 
     def test_ordering(self):
         class OrderingListView(generics.ListAPIView):
-            model = OrderingFilterModel
+            queryset = OrderingFilterModel.objects.all()
+            serializer_class = OrderingFilterSerializer
             filter_backends = (filters.OrderingFilter,)
             ordering = ('title',)
             ordering_fields = ('text',)
@@ -504,7 +588,8 @@ class OrderingFilterTests(TestCase):
 
     def test_reverse_ordering(self):
         class OrderingListView(generics.ListAPIView):
-            model = OrderingFilterModel
+            queryset = OrderingFilterModel.objects.all()
+            serializer_class = OrderingFilterSerializer
             filter_backends = (filters.OrderingFilter,)
             ordering = ('title',)
             ordering_fields = ('text',)
@@ -523,7 +608,8 @@ class OrderingFilterTests(TestCase):
 
     def test_incorrectfield_ordering(self):
         class OrderingListView(generics.ListAPIView):
-            model = OrderingFilterModel
+            queryset = OrderingFilterModel.objects.all()
+            serializer_class = OrderingFilterSerializer
             filter_backends = (filters.OrderingFilter,)
             ordering = ('title',)
             ordering_fields = ('text',)
@@ -542,7 +628,8 @@ class OrderingFilterTests(TestCase):
 
     def test_default_ordering(self):
         class OrderingListView(generics.ListAPIView):
-            model = OrderingFilterModel
+            queryset = OrderingFilterModel.objects.all()
+            serializer_class = OrderingFilterSerializer
             filter_backends = (filters.OrderingFilter,)
             ordering = ('title',)
             oredering_fields = ('text',)
@@ -561,7 +648,8 @@ class OrderingFilterTests(TestCase):
 
     def test_default_ordering_using_string(self):
         class OrderingListView(generics.ListAPIView):
-            model = OrderingFilterModel
+            queryset = OrderingFilterModel.objects.all()
+            serializer_class = OrderingFilterSerializer
             filter_backends = (filters.OrderingFilter,)
             ordering = 'title'
             ordering_fields = ('text',)
@@ -590,7 +678,7 @@ class OrderingFilterTests(TestCase):
                 new_related.save()
 
         class OrderingListView(generics.ListAPIView):
-            model = OrderingFilterModel
+            serializer_class = OrderingFilterSerializer
             filter_backends = (filters.OrderingFilter,)
             ordering = 'title'
             ordering_fields = '__all__'
@@ -610,9 +698,12 @@ class OrderingFilterTests(TestCase):
         )
 
     def test_ordering_with_nonstandard_ordering_param(self):
-        with temporary_setting('ORDERING_PARAM', 'order', filters):
+        with override_settings(REST_FRAMEWORK={'ORDERING_PARAM': 'order'}):
+            reload_module(filters)
+
             class OrderingListView(generics.ListAPIView):
-                model = OrderingFilterModel
+                queryset = OrderingFilterModel.objects.all()
+                serializer_class = OrderingFilterSerializer
                 filter_backends = (filters.OrderingFilter,)
                 ordering = ('title',)
                 ordering_fields = ('text',)
@@ -628,6 +719,8 @@ class OrderingFilterTests(TestCase):
                     {'id': 3, 'title': 'xwv', 'text': 'cde'},
                 ]
             )
+
+        reload_module(filters)
 
 
 class SensitiveOrderingFilterModel(models.Model):

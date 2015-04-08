@@ -24,7 +24,7 @@ We'll start by rewriting the root view as a class based view.  All this involves
             return Response(serializer.data)
 
         def post(self, request, format=None):
-            serializer = SnippetSerializer(data=request.DATA)
+            serializer = SnippetSerializer(data=request.data)
             if serializer.is_valid():
                 serializer.save()
                 return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -49,7 +49,7 @@ So far, so good.  It looks pretty similar to the previous case, but we've got be
 
         def put(self, request, pk, format=None):
             snippet = self.get_object(pk)
-            serializer = SnippetSerializer(snippet, data=request.DATA)
+            serializer = SnippetSerializer(snippet, data=request.data)
             if serializer.is_valid():
                 serializer.save()
                 return Response(serializer.data)
@@ -64,7 +64,7 @@ That's looking good.  Again, it's still pretty similar to the function based vie
 
 We'll also need to refactor our `urls.py` slightly now we're using class based views.
 
-    from django.conf.urls import patterns, url
+    from django.conf.urls import url
     from rest_framework.urlpatterns import format_suffix_patterns
     from snippets import views
 

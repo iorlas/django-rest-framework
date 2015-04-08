@@ -31,7 +31,7 @@ class AssociatedModelSerializer(serializers.ModelSerializer):
 
 
 # Tests
-class IneritedModelSerializationTests(TestCase):
+class InheritedModelSerializationTests(TestCase):
 
     def test_multitable_inherited_model_fields_as_expected(self):
         """
@@ -48,8 +48,8 @@ class IneritedModelSerializationTests(TestCase):
         Assert that a model with a onetoone field that is the primary key is
         not treated like a derived model
         """
-        parent = ParentModel(name1='parent name')
-        associate = AssociatedModel(name='hello', ref=parent)
+        parent = ParentModel.objects.create(name1='parent name')
+        associate = AssociatedModel.objects.create(name='hello', ref=parent)
         serializer = AssociatedModelSerializer(associate)
         self.assertEqual(set(serializer.data.keys()),
                          set(['name', 'ref']))
